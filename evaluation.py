@@ -41,7 +41,7 @@ original_data = pd.read_csv("Datasets/" + input_file + ".csv", index_col=index)
 dataset = copy.deepcopy(original_data)
 original_data = original_data.drop(columns=[label])
 for sens in sens_attrs:
-    original_data = original_data.loc[:, original_data != sens]
+    original_data = original_data.loc[:, original_data.columns != sens]
 
 original_data_short = pd.read_csv(link + model_list[0] + "_prediction.csv", index_col=index)
 original_data_short = pd.merge(original_data_short, original_data, left_index=True, right_index=True)
