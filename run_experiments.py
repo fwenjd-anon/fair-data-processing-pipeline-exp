@@ -68,7 +68,6 @@ model_list = [
     "GetFair",\
     "LogisticRegression",\
     "LogisticRegressionRemoved"]
-model_list = ["Fair-SMOTE", "Reweighing"]
 
 #Choose the randomstate. If set to -1, then a random one is taken. Make sure that all algorithms
 #use the same randomstate. Also choose the size of the testdata.
@@ -86,7 +85,7 @@ tuning = True
 opt = False
 
 #Choose the considered fairness metric: demographic_parity, equalized_odds, treatment_equality, consistency
-metric = "consistency"
+metric = "demographic_parity"
 
 #Choose if the removal component should be activated
 removal = False
