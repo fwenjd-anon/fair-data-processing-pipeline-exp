@@ -16,6 +16,9 @@ from sklearn.tree import DecisionTreeClassifier
 from sklearn.linear_model import LogisticRegression
 from aif360.datasets import BinaryLabelDataset
 from aif360.metrics import BinaryLabelDatasetMetric
+from imblearn.combine import SMOTETomek
+from sklearn.feature_selection import VarianceThreshold, RFECV
+from sklearn.decomposition import PCA
 import algorithm
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
@@ -43,6 +46,9 @@ parser.add_argument("--removal", default="False", type=str, help="Set to True if
     should be removed.")
 parser.add_argument("--binarize", default="False", type=str, help="Set to True if protected attributes\
     should be binarized.")
+parser.add_argument("--balance", default="no", type=str, help="If balance should be applied.")
+parser.add_argument("--fselection", default="False", type=str, help="Set to True if feature selection activated.")
+parser.add_argument("--dimred", default="False", type=str, help="Set to True if dimensionality reduction is activated.")
 args = parser.parse_args()
 
 input_file = args.ds
@@ -58,27 +64,19 @@ if randomstate == -1:
     import random
     randomstate = random.randint(1,1000)
 model_list = ast.literal_eval(args.models)
-if args.tuning == "True":
-    tuning = True
-else:
-    tuning = False
-if args.opt == "True":
-    opt = True
-else:
-    opt = False
-if args.removal == "True":
-    rem_prot = True
-else:
-    rem_prot = False
-if args.binarize == "True":
-    binarize = True
-else:
-    binarize = False
+tuning = args.tuning == "True"
+opt = args.opt == "True"
+rem_prot = args.removal == "True"
+binarize = args.binarize == "True"
+balance = args.balance
+fselection = args.fselection
+dimred = args.dimred == "True"
 
 df = pd.read_csv("Datasets/" + input_file + ".csv", index_col=index)
 grouped_df = df.groupby(sens_attrs)
 group_keys = grouped_df.groups.keys()
 
+##DATA PREPARATION SETTINGS START
 if binarize:
     if len(sens_attrs) > 1:
         for i, row in df.iterrows():
@@ -126,11 +124,110 @@ y = df[label]
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=testsize,
     random_state=randomstate)
 
+if balance == "classic":
+    smttmk = SMOTETomek()
+    X_train, y_train = smttmk.fit_resample(X_train, y_train)
+elif balance == "protected":
+    smttmk = SMOTETomek()
+    df_new = X_train.merge(y_train, left_index=True, right_index=True, how="inner")
+    key_list = []
+    cols = copy.deepcopy(sens_attrs)
+    cols.append(label)
+    grouped_df = df_new.groupby(cols)
+    count = 0
+    for key, item in grouped_df:
+        part_df = grouped_df.get_group(key)
+        for i, row in part_df.iterrows():
+            df_new.loc[i, "target"] = count
+        count += 1
+        key_list.append(key)
+
+    X_train = df_new.loc[:, df_new.columns != "target"]
+    y_train = df_new["target"]
+    for col in cols:
+        X_train = X_train.drop(col, axis=1)
+
+    X_train, y_train = smttmk.fit_resample(X_train, y_train)
+    df_new = X_train.merge(y_train, left_index=True, right_index=True, how="inner")
+
+    grouped_df = df_new.groupby("target")
+    for i in range(count):
+        part_df = grouped_df.get_group(i)
+        for r, row in part_df.iterrows():
+            for j, col in enumerate(cols):
+                df_new.loc[r, col] = key_list[i][j]
+
+    df_new = df_new.drop("target", axis=1)
+
+    X_train = df_new.loc[:, df_new.columns != label]
+    y_train = df_new[label]
+
+    cols = X_test.columns.to_list()
+    X_train = X_train[cols]
+
+
+if dimred:
+    prot_feats_train = []
+    prot_feats_test = []
+    X_train_no_prot = copy.deepcopy(X_train)
+    X_test_no_prot = copy.deepcopy(X_test)
+    for sens in sens_attrs:
+        prot_feats_train.append(X_train[sens])
+        prot_feats_test.append(X_test[sens])
+        X_train_no_prot = X_train_no_prot.loc[:, X_train_no_prot.columns != sens]
+        X_test_no_prot = X_test_no_prot.loc[:, X_test_no_prot.columns != sens]
+    pca = PCA(n_components="mle")
+    pca.fit(X_train_no_prot)
+    X_train_np = pca.transform(X_train_no_prot)
+    X_test_np = pca.transform(X_test_no_prot)
+    cols = [str(i) for i in range(len(X_train_np[0]))]
+    X_train = pd.DataFrame(X_train_np, columns=cols)
+    X_test = pd.DataFrame(X_test_np, columns=cols)
+
+    for i, sens in enumerate(sens_attrs):
+        X_train[sens] = prot_feats_train[i].tolist()
+        X_test[sens] = prot_feats_test[i].tolist()
+
+    X_train["index"] = prot_feats_train[0].index.values.tolist()
+    X_test["index"] = prot_feats_test[0].index.values.tolist()
+    X_train.set_index("index", inplace=True)
+    X_test.set_index("index", inplace=True)
+
+
+if fselection == "VT":
+    cols = list(X_train.columns)
+    selector = VarianceThreshold()
+    selector.fit(X_train)
+    variances = selector.variances_
+    rm_list = []
+    for i, col in enumerate(cols):
+        if col not in sens_attrs and variances[i] < 0.1:
+            rm_list.append(col)
+    if len(rm_list) >= 1:
+        for rm in rm_list:
+            X_train = X_train.loc[:, X_train.columns != rm]
+            X_test = X_test.loc[:, X_test.columns != rm]
+elif fselection == "RFECV":
+    cols = list(X_train.columns)
+    rfe = RFECV(LogisticRegression(), cv=10)
+    rfe.fit(X_train, y_train)
+    support = rfe.support_
+    rm_list = []
+    for i, col in enumerate(cols):
+        if col not in sens_attrs and not support[i]:
+            rm_list.append(col)
+    if len(rm_list) >= 1:
+        for rm in rm_list:
+            X_train = X_train.loc[:, X_train.columns != rm]
+            X_test = X_test.loc[:, X_test.columns != rm]
+
+
 train_df = pd.merge(X_train, y_train, left_index=True, right_index=True)
 test_df = pd.merge(X_test, y_test, left_index=True, right_index=True)
 dataset_train = BinaryLabelDataset(df=train_df, label_names=[label], protected_attribute_names=sens_attrs)
 dataset_test = BinaryLabelDataset(df=test_df, label_names=[label], protected_attribute_names=sens_attrs)
 full_dataset = BinaryLabelDataset(df=df, label_names=[label], protected_attribute_names=sens_attrs)
+
 
 train_id_list = []
 for i, row in X_train.iterrows():
@@ -145,6 +242,7 @@ y_test = y_test.to_frame()
 result_df = copy.deepcopy(y_test)
 for sens in sens_attrs:
     result_df[sens] = X_test[sens]
+##DATA PREPARATION SETTINGS END
 
 preproc = algorithm.Preprocessing(X_train, X_test, y_train, y_test, sens_attrs,
     dataset_train, dataset_test, testsize, randomstate, privileged_groups, unprivileged_groups,
@@ -230,13 +328,13 @@ for model in model_list:
             elif "Fair-SMOTE" == model:
                 prediction, X_train2, y_train2, score, model = preproc.smote(log_regr2, do_eval=do_eval)
             elif "FairSSL-ST" == model:
-                prediction, X_train2, y_train2, score, model = preproc.fairssl(log_regr2, ssl_type=li[0], balancing=li[1]=="True", do_eval=do_eval)
+                prediction, X_train2, y_train2, score, model = preproc.fairssl(log_regr2, ssl_type="SelfTraining", balancing=li[0]=="True", do_eval=do_eval)
             elif "FairSSL-LS" == model:
-                prediction, X_train2, y_train2, score, model = preproc.fairssl(log_regr2, ssl_type=li[0], balancing=li[1]=="True", do_eval=do_eval)
+                prediction, X_train2, y_train2, score, model = preproc.fairssl(log_regr2, ssl_type="LabelSpreading", balancing=li[0]=="True", do_eval=do_eval)
             elif "FairSSL-LP" == model:
-                prediction, X_train2, y_train2, score, model = preproc.fairssl(log_regr2, ssl_type=li[0], balancing=li[1]=="True", do_eval=do_eval)
+                prediction, X_train2, y_train2, score, model = preproc.fairssl(log_regr2, ssl_type="LabelPropagation", balancing=li[0]=="True", do_eval=do_eval)
             elif "FairSSL-CT" == model:
-                prediction, X_train2, y_train2, score, model = preproc.fairssl(log_regr2, ssl_type=li[0], balancing=li[1]=="True", do_eval=do_eval)
+                prediction, X_train2, y_train2, score, model = preproc.fairssl(log_regr2, ssl_type="CoTraining", balancing=li[0]=="True", do_eval=do_eval)
             elif "LTDD" == model:
                 prediction, X_train2, y_train2, score, model = preproc.ltdd(log_regr2, do_eval=do_eval)
             #Other Inprocessing predictions
@@ -270,7 +368,7 @@ for model in model_list:
             elif "JiangNachum" == model:
                 prediction, X_train2, y_train2, weights, score, model = postproc.jiang_nachum(log_regr, iterations=li[0], learning=li[1], do_eval=do_eval)
             elif "FaX" == model:
-                prediction, score, model = postproc.fax(method=li[0], do_eval=do_eval)
+                prediction, score, model = postproc.fax(method="MIM", do_eval=do_eval)
             elif "DPAbstention" == model:
                 prediction, score, model = postproc.dpabst(log_regr, alpha=li[0], do_eval=do_eval)
             elif "GetFair" == model:

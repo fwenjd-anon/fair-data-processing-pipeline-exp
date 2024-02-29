@@ -7,6 +7,8 @@ import pandas as pd
 
 #For the experiment with two protected attributes, the dataset dictionary has to add the second attribute
 #to the sens_attrs list and the corresponding value of the privileged group to the favored tuple.
+
+#For the adult data set, race can be used, as well as a combination of ["race", "sex"].
 data_dict = {
     "german": {"sens_attrs": ["sex"], "label": "job", "favored": (0)},
     "compas": {"sens_attrs": ["Race"], "label": "Two_yr_Recidivism", "favored": (0)},
@@ -87,11 +89,22 @@ opt = False
 #Choose the considered fairness metric: demographic_parity, equalized_odds, treatment_equality, consistency
 metric = "demographic_parity"
 
+##DATA PREPARATION SETTINGS END
 #Choose if the removal component should be activated
 removal = False
 
 #Choose if the binarization component should be activated
 binarize = False
+
+#Choose if the balancing component should be activated and which one: (False, classic, protected)
+balance = False
+
+#Choose if the feature selection component should be activated and which one: (False, VT, RFECV)
+fselection = False
+
+#Choose if the dimensionality reduction component should be activated
+dimred = False
+##DATA PREPARATION SETTINGS END
 
 #Choose the dataset to run the experiments on (see the dictionary above)
 ds = "communities"
@@ -115,7 +128,8 @@ subprocess.check_call(['python', '-Wignore', 'main.py', '--output', str(link),
     '--ds', str(ds), '--sensitive', str(sensitive), '--favored', str(favored),
     '--label', str(label), '--testsize', str(testsize), '--randomstate', str(randomstate),
     '--models', str(model_list), '--metric', str(metric), '--tuning', str(tuning),
-    '--opt', str(opt), '--binarize', str(binarize), '--removal', str(removal)])
+    '--opt', str(opt), '--binarize', str(binarize), '--removal', str(removal),
+    '--balance', str(balance), '--fselection', str(fselection), '--dimred', str(dimred)])
 
 if tuning:
     model_list_eval = []

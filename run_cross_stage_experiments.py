@@ -75,7 +75,12 @@ label = data_dict[ds]["label"]
 favored = data_dict[ds]["favored"]
 
 #Choose where to store the files
-link = "Results/cross_stages/" + str(metric) + "/" + str(ds) + "/"
+link = "Results/cross_stage/" + str(metric) + "/" + str(ds) + "/"
+
+#Determine if tuning should be turned on or off. It is suggested to first optimize for the pre-processing
+#algorithms and then use the saved parameters as input, otherwise it will take the default values for the
+#pre-processing algorithm.
+tuning = False
 
 try:
     os.makedirs(link)
@@ -89,7 +94,7 @@ PARAMETER SETTINGS END
 subprocess.check_call(['python', '-Wignore', 'main_cross.py', '--output', str(link),
     '--ds', str(ds), '--sensitive', str(sensitive), '--favored', str(favored),
     '--label', str(label), '--testsize', str(testsize), '--randomstate', str(randomstate),
-    '--pre_models', str(pre_model_list), '--tuning', str(False), '--metric', str(metric),
+    '--pre_models', str(pre_model_list), '--tuning', str(tuning), '--metric', str(metric),
     '--inpost_models', str(inpost_model_list)])
 
 model_list = []

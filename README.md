@@ -1,6 +1,6 @@
 # Experiments&Analysis: Multi-step pipelines for fair classifications
 
-This repository contains the codes needed to reproduce the experiments of our submitted SIGMOD 2024 paper
+This repository contains the codes needed to reproduce the experiments of our submitted VLDB 2024 Paper
 
 ## General Information
 

@@ -146,10 +146,10 @@
 	"FaX": {
 		"method": "fax",
 		"default": {
-			"method": "MIM"
+
 		},
 		"tuning": {
-			"method": ["MIM"]
+
 		}
 	},
 
@@ -319,11 +319,9 @@
 	"FairSSL-ST": {
 		"method": "fairssl",
 		"default": {
-			"ssl_type": "SelfTraining",
 			"balancing": "True"
 		},
 		"tuning": {
-			"ssl_type": ["SelfTraining"],
 			"balancing": ["True", "False"]
 		}
 	},
@@ -332,11 +330,9 @@
 	"FairSSL-LS": {
 		"method": "fairssl",
 		"default": {
-			"ssl_type": "LabelSpreading",
 			"balancing": "True"
 		},
 		"tuning": {
-			"ssl_type": ["LabelSpreading"],
 			"balancing": ["True", "False"]
 		}
 	},
@@ -345,11 +341,9 @@
 	"FairSSL-LP": {
 		"method": "fairssl",
 		"default": {
-			"ssl_type": "LabelPropagation",
 			"balancing": "True"
 		},
 		"tuning": {
-			"ssl_type": ["LabelPropagation"],
 			"balancing": ["True", "False"]
 		}
 	},
@@ -358,11 +352,9 @@
 	"FairSSL-CT": {
 		"method": "fairssl",
 		"default": {
-			"ssl_type": "CoTraining",
 			"balancing": "True"
 		},
 		"tuning": {
-			"ssl_type": ["CoTraining"],
 			"balancing": ["True", "False"]
 		}
 	},

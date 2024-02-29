@@ -54,10 +54,11 @@ if randomstate == -1:
     randomstate = random.randint(1,1000)
 pre_model_list = ast.literal_eval(args.pre_models)
 inpost_model_list = ast.literal_eval(args.inpost_models)
-if args.tuning == "True":
-    tuning = True
+tuning = args.tuning == "True"
+if tuning:
+    do_eval = True
 else:
-    tuning = False
+    do_eval = False
 
 df = pd.read_csv("Datasets/" + input_file + ".csv", index_col=index)
 grouped_df = df.groupby(sens_attrs)
@@ -125,6 +126,7 @@ log_regr2 = LogisticRegression(C=1.0, penalty="l2", solver="liblinear", max_iter
 dectree = DecisionTreeClassifier()
 
 params = json.load(open('configs/params.json'))
+params_optimized = json.load(open('configs/params_opt_' + metric + '.json'))
 opt_param = dict()
 
 for pre in pre_model_list:
@@ -133,21 +135,24 @@ for pre in pre_model_list:
     paramlist = list(params[pre]["default"].keys())
     li = []
     for param in paramlist:
-        li.append(params[pre]["default"][param])
+        if not tuning:
+            li.append(params[pre]["default"][param])
+        else:
+            li.append(params_optimized[pre][input_file][param])
     if "LFR" == pre:
-        prediction, X_train, y_train, score, pre_model = aif_preproc.lfr(log_regr, k=li[2], Ay=li[0], Az=li[1], do_eval=False)
+        prediction, X_train, y_train, score, pre_model = aif_preproc.lfr(log_regr, k=li[2], Ay=li[0], Az=li[1], do_eval=do_eval)
     elif "Fair-SMOTE" == pre:
-        prediction, X_train, y_train, score, pre_model = preproc.smote(log_regr2, do_eval=False)
+        prediction, X_train, y_train, score, pre_model = preproc.smote(log_regr2, do_eval=do_eval)
     elif "FairSSL-ST" == pre:
-        prediction, X_train, y_train, score, pre_model = preproc.fairssl(log_regr2, ssl_type=li[0], balancing=li[1]=="True", do_eval=False)
+        prediction, X_train, y_train, score, pre_model = preproc.fairssl(log_regr2, ssl_type="SelfTraining", balancing=li[0]=="True", do_eval=do_eval)
     elif "FairSSL-LS" == pre:
-        prediction, X_train, y_train, score, pre_model = preproc.fairssl(log_regr2, ssl_type=li[0], balancing=li[1]=="True", do_eval=False)
+        prediction, X_train, y_train, score, pre_model = preproc.fairssl(log_regr2, ssl_type="LabelSpreading", balancing=li[0]=="True", do_eval=do_eval)
     elif "FairSSL-LP" == pre:
-        prediction, X_train, y_train, score, pre_model = preproc.fairssl(log_regr2, ssl_type=li[0], balancing=li[1]=="True", do_eval=False)
+        prediction, X_train, y_train, score, pre_model = preproc.fairssl(log_regr2, ssl_type="LabelPropagation", balancing=li[0]=="True", do_eval=do_eval)
     elif "FairSSL-CT" == pre:
-        prediction, X_train, y_train, score, pre_model = preproc.fairssl(log_regr2, ssl_type=li[0], balancing=li[1]=="True", do_eval=False)
+        prediction, X_train, y_train, score, pre_model = preproc.fairssl(log_regr2, ssl_type="CoTraining", balancing=li[0]=="True", do_eval=do_eval)
     elif "LTDD" == pre:
-        prediction, X_train, y_train, score, pre_model = preproc.ltdd(log_regr2, do_eval=False)
+        prediction, X_train, y_train, score, pre_model = preproc.ltdd(log_regr2, do_eval=do_eval)
     for inpost in inpost_model_list:
         train_df = pd.merge(X_train, y_train, left_index=True, right_index=True)
         dataset_train = BinaryLabelDataset(df=train_df, label_names=[label], protected_attribute_names=sens_attrs)
@@ -165,72 +170,98 @@ for pre in pre_model_list:
         aif_postproc = algorithm.AIFPostprocessing(X_train, X_test, y_train, y_test, sens_attrs,
             dataset_train, dataset_test, privileged_groups, unprivileged_groups, label, metric,
             link, False)
-        try:
-            paramlist = list(params[inpost]["default"].keys())
-            li = []
+
+        paramlist = list(params[inpost]["default"].keys())
+        li = []
+        if not tuning:
             for param in paramlist:
                 li.append(params[inpost]["default"][param])
-            if "AdversarialDebiasing" == inpost:
-                prediction, score, model = aif_inproc.adversarial_debiasing("plain_classifier", weight=li[0], debias=li[1]=="True", do_eval=False)
-            elif "GerryFairClassifier" == inpost:
-                prediction, score, model = aif_inproc.gerryfair(log_regr, gamma=li[0], do_eval=False)
-            elif "MetaFairClassifier" == inpost:
-                prediction, score, model = aif_inproc.metafair(tau=li[0], do_eval=False)
-            elif "PrejudiceRemover" == inpost:
-                prediction, score, model = aif_inproc.prejudice_remover(eta=li[0], do_eval=False)
-            elif "ExponentiatedGradientReduction" == inpost:
-                prediction, score, model = aif_inproc.exponentiated_gradient_reduction(log_regr, eps=li[0], eta=li[1], drop_prot_attr=li[2]=="True", do_eval=False)
-            elif "GridSearchReduction" == inpost:
-                prediction, score, model = aif_inproc.gridsearch_reduction(log_regr, weight=li[0], drop_prot_attr=li[1]=="True", do_eval=False)
-            elif "EqOddsPostprocessing" == inpost:
-                prediction, score, model = aif_postproc.eqodds_postproc(log_regr, do_eval=False)
-            elif "CalibratedEqOddsPostprocessing" == inpost:
-                prediction, score, model = aif_postproc.calibrated_eqodds_postproc(log_regr, do_eval=False)
-            elif "RejectOptionClassification" == inpost:
-                prediction, score, model = aif_postproc.reject_option_class(log_regr, do_eval=False)
-            elif "FaX" == inpost:
-                prediction, score, model = postproc.fax(method=li[0], do_eval=False)
-            elif "DPAbstention" == inpost:
-                prediction, score, model = postproc.dpabst(log_regr, alpha=li[0], do_eval=False)
-            elif "GetFair" == inpost:
-                prediction, score, model = postproc.getfair(log_regr, lam=li[0], step_size=li[1], episodes=li[2], hidden_size=li[3], layers=li[4], do_eval=False)
-            elif "FairBayesDPP" == inpost:
-                prediction, score, model = postproc.fair_bayes_dpp(n_epochs=li[0], lr=li[1], batch_size=li[2], n_seeds=li[3], do_eval=False)
-            elif "JiangNachum" == inpost:
-                prediction, X_train3, y_train3, weights, score, model = postproc.jiang_nachum(log_regr, iterations=li[0], learning=li[1], do_eval=False)
-            elif "AdaFair" == inpost:
-                prediction, score, model = inproc.adafair(dectree, iterations=li[0], learning_rate=li[1], do_eval=False)
-            elif "FairGeneralizedLinearModel" == inpost:
-                prediction, score, model = inproc.fglm(lam=li[0], family=li[1], discretization=li[2], do_eval=False)
-            elif "SquaredDifferenceFairLogistic" == inpost:
-                prediction, score, model = inproc.squared_diff_fair_logistic(lam=li[0], do_eval=False)
-            elif "FairnessConstraintModel" == inpost:
-                prediction, score, model = inproc.fairness_constraint_model(c=li[0], tau=li[1], mu=li[2], eps=li[3], do_eval=False)
-            elif "DisparateMistreatmentModel" == inpost:
-                prediction, score, model = inproc.disparate_treatment_model(c=li[0], tau=li[1], mu=li[2], eps=li[3], do_eval=False)
-            elif "ConvexFrameworkModel" == inpost:
-                prediction, score, model = inproc.convex_framework(lam=li[0], family=li[1], penalty=li[2], do_eval=False)
-            elif "HSICLinearRegression" == inpost:
-                prediction, score, model = inproc.hsic_linear_regression(lam=li[0], do_eval=False)
-            elif "GeneralFairERM" == inpost:
-                prediction, score, model = inproc.general_ferm(eps=li[0], k=li[1], do_eval=False)
-            elif "FAGTB" == inpost:
-                prediction, score, model = inproc.fagtb(estimators=li[0], learning=li[1], lam=li[2], do_eval=False)
-            elif "FairDummies" == inpost:
-                prediction, score, model = inproc.fair_dummies(batch=li[0], lr=li[1], mu=li[2], second_scale=li[3], epochs=li[4], model_type=li[5], do_eval=False)
-            elif "HGR" == inpost:
-                prediction, score, model = inproc.hgr(batch=li[0], lr=li[1], mu=li[2], epochs=li[3], model_type=li[4], do_eval=False)
-            elif "MultiAdversarialDebiasing" == inpost:
-                prediction, score, model = inproc.multi_adv_deb(weight=li[0], do_eval=False)
-            elif "GradualCompatibility" == inpost:
-                prediction, score, model = inproc.grad_compat(reg=li[0], reg_val=li[1], weights_init=li[2], lambda_=li[3], do_eval=False)            
+                full_list = [li]
+        else:
+            #li.append(params_optimized[inpost][input_file][str(randomstate)][param])
+            for param in paramlist:
+                li.append(params[inpost]["tuning"][param])
+            full_list = list(itertools.product(*li))
 
-            result_df[pre_model + "_" + model] = prediction
-            result_df.to_csv(link + pre_model + "_" + model + "_prediction.csv")
-            result_df = result_df.drop(columns=[pre_model + "_" + model])
+        max_val = 0
+        best_li = 0
+        for i, li in enumerate(full_list):
+            score = 0
+            #func = eval(params[model]["method"])
+            try:
+                if "AdversarialDebiasing" == inpost:
+                    prediction, score, model = aif_inproc.adversarial_debiasing("plain_classifier", weight=li[0], debias=li[1]=="True", do_eval=do_eval)
+                elif "GerryFairClassifier" == inpost:
+                    prediction, score, model = aif_inproc.gerryfair(log_regr, gamma=li[0], do_eval=do_eval)
+                elif "MetaFairClassifier" == inpost:
+                    prediction, score, model = aif_inproc.metafair(tau=li[0], do_eval=do_eval)
+                elif "PrejudiceRemover" == inpost:
+                    prediction, score, model = aif_inproc.prejudice_remover(eta=li[0], do_eval=do_eval)
+                elif "ExponentiatedGradientReduction" == inpost:
+                    prediction, score, model = aif_inproc.exponentiated_gradient_reduction(log_regr, eps=li[0], eta=li[1], drop_prot_attr=li[2]=="True", do_eval=do_eval)
+                elif "GridSearchReduction" == inpost:
+                    prediction, score, model = aif_inproc.gridsearch_reduction(log_regr, weight=li[0], drop_prot_attr=li[1]=="True", do_eval=do_eval)
+                elif "EqOddsPostprocessing" == inpost:
+                    prediction, score, model = aif_postproc.eqodds_postproc(log_regr, do_eval=do_eval)
+                elif "CalibratedEqOddsPostprocessing" == inpost:
+                    prediction, score, model = aif_postproc.calibrated_eqodds_postproc(log_regr, do_eval=do_eval)
+                elif "RejectOptionClassification" == inpost:
+                    prediction, score, model = aif_postproc.reject_option_class(log_regr, do_eval=do_eval)
+                elif "FaX" == inpost:
+                    prediction, score, model = postproc.fax(method="MIM", do_eval=do_eval)
+                elif "DPAbstention" == inpost:
+                    prediction, score, model = postproc.dpabst(log_regr, alpha=li[0], do_eval=do_eval)
+                elif "GetFair" == inpost:
+                    prediction, score, model = postproc.getfair(log_regr, lam=li[0], step_size=li[1], episodes=li[2], hidden_size=li[3], layers=li[4], do_eval=do_eval)
+                elif "FairBayesDPP" == inpost:
+                    prediction, score, model = postproc.fair_bayes_dpp(n_epochs=li[0], lr=li[1], batch_size=li[2], n_seeds=li[3], do_eval=do_eval)
+                elif "JiangNachum" == inpost:
+                    prediction, X_train3, y_train3, weights, score, model = postproc.jiang_nachum(log_regr, iterations=li[0], learning=li[1], do_eval=do_eval)
+                elif "AdaFair" == inpost:
+                    prediction, score, model = inproc.adafair(dectree, iterations=li[0], learning_rate=li[1], do_eval=do_eval)
+                elif "FairGeneralizedLinearModel" == inpost:
+                    prediction, score, model = inproc.fglm(lam=li[0], family=li[1], discretization=li[2], do_eval=do_eval)
+                elif "SquaredDifferenceFairLogistic" == inpost:
+                    prediction, score, model = inproc.squared_diff_fair_logistic(lam=li[0], do_eval=do_eval)
+                elif "FairnessConstraintModel" == inpost:
+                    prediction, score, model = inproc.fairness_constraint_model(c=li[0], tau=li[1], mu=li[2], eps=li[3], do_eval=do_eval)
+                elif "DisparateMistreatmentModel" == inpost:
+                    prediction, score, model = inproc.disparate_treatment_model(c=li[0], tau=li[1], mu=li[2], eps=li[3], do_eval=do_eval)
+                elif "ConvexFrameworkModel" == inpost:
+                    prediction, score, model = inproc.convex_framework(lam=li[0], family=li[1], penalty=li[2], do_eval=do_eval)
+                elif "HSICLinearRegression" == inpost:
+                    prediction, score, model = inproc.hsic_linear_regression(lam=li[0], do_eval=do_eval)
+                elif "GeneralFairERM" == inpost:
+                    prediction, score, model = inproc.general_ferm(eps=li[0], k=li[1], do_eval=do_eval)
+                elif "FAGTB" == inpost:
+                    prediction, score, model = inproc.fagtb(estimators=li[0], learning=li[1], lam=li[2], do_eval=do_eval)
+                elif "FairDummies" == inpost:
+                    prediction, score, model = inproc.fair_dummies(batch=li[0], lr=li[1], mu=li[2], second_scale=li[3], epochs=li[4], model_type=li[5], do_eval=do_eval)
+                elif "HGR" == inpost:
+                    prediction, score, model = inproc.hgr(batch=li[0], lr=li[1], mu=li[2], epochs=li[3], model_type=li[4], do_eval=do_eval)
+                elif "MultiAdversarialDebiasing" == inpost:
+                    prediction, score, model = inproc.multi_adv_deb(weight=li[0], do_eval=do_eval)
+                elif "GradualCompatibility" == inpost:
+                    prediction, score, model = inproc.grad_compat(reg=li[0], reg_val=li[1], weights_init=li[2], lambda_=li[3], do_eval=do_eval)            
 
-        except Exception as e:
-            print("------------------")
-            print(pre + "_" + inpost)
-            print(e)
-            print("------------------")
+                if not tuning:
+                    result_df[pre_model + "_" + model] = prediction
+                    result_df.to_csv(link + pre_model + "_" + model + "_prediction.csv")
+                    result_df = result_df.drop(columns=[pre_model + "_" + model])
+
+                else:
+                    if score > max_val:
+                        max_val = score
+                        best_li = li
+                        #best_pred = prediction
+
+                        result_df[pre_model + "_" + model + "_tuned"] = prediction
+                        result_df.to_csv(link + pre_model + "_" + model + "_tuned_prediction.csv")
+                        result_df = result_df.drop(columns=[pre_model + "_" + model + "_tuned"])
+
+
+            except Exception as e:
+                print("------------------")
+                print(pre + "_" + inpost)
+                print(e)
+                print("------------------")
