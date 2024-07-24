@@ -81,7 +81,7 @@ class AIFPreprocessing():
         X_train = pd.DataFrame(X_train, columns=train_repd.feature_names)
         y_train = pd.DataFrame(np.asarray(y_train).reshape(-1,1), columns=[self.label])
 
-        return pred, X_train, y_train, X_test, metric_val, "DisparateImpactRemover"
+        return pred, X_train, y_train, X_test, metric_val, "DisparateImpactRemover", classifier
 
 
     def lfr(self, classifier, k, Ay, Az, do_eval=False):
@@ -89,23 +89,32 @@ class AIFPreprocessing():
         ...
         """
         scale_orig = StandardScaler()
-        self.dataset.features = scale_orig.fit_transform(self.dataset.features)
+        dataset = copy.deepcopy(self.dataset)
+        dataset.features = scale_orig.fit_transform(dataset.features)
 
         model = LFR(self.unprivileged_groups, self.privileged_groups, k=10, Ay=Ay, Az=Az)
         model = model.fit(self.dataset_train)
         dataset_transf_train = model.transform(self.dataset_train)
         dataset_transf_test = model.transform(self.dataset_test)
 
-        dataset_transf_train = dataset_transf_train.convert_to_dataframe()[0]
-        X_train = dataset_transf_train.loc[:, dataset_transf_train.columns != self.label]
-        y_train = dataset_transf_train[self.label]
+        X_train = dataset_transf_train.convert_to_dataframe()[0]
+        y_train = X_train[self.label]
+        X_train = X_train.loc[:, X_train.columns != self.label]
+
+        X_test = dataset_transf_test.convert_to_dataframe()[0]
+        X_test = X_test.loc[:, X_test.columns != self.label]
+        
         if self.remove:  
-            X_test = copy.deepcopy(self.X_test)
             for sens in self.sens_attrs:
                 X_train = X_train.drop(sens, axis=1)
                 X_test = X_test.drop(sens, axis=1)
-            classifier.fit(X_train, y_train)
-            pred = classifier.predict(X_test)
+            try:
+                classifier.fit(X_train, y_train)
+                pred = classifier.predict(X_test)
+            except:
+                #y_train has only one value
+                preds = dataset_transf_test.labels
+                pred = [preds[i][0] for i in range(len(preds))]
         else:
             preds = dataset_transf_test.labels
             pred = [preds[i][0] for i in range(len(preds))]
@@ -115,7 +124,7 @@ class AIFPreprocessing():
         else:
             metric_val = None
 
-        return pred, X_train, y_train, metric_val, "LFR"
+        return pred, X_train, y_train, X_test, metric_val, "LFR", classifier
 
 
     def reweighing(self, classifier, do_eval=False):
@@ -129,23 +138,20 @@ class AIFPreprocessing():
         X_train = dataset_cleaned.loc[:, dataset_cleaned.columns != self.label]
         y_train = dataset_cleaned[self.label]
 
-        classifier2 = copy.deepcopy(classifier)
 
-        classifier.fit(X_train, y_train, attr["instance_weights"])
-        pred = classifier.predict(self.X_test)
+        X_test = copy.deepcopy(self.X_test)
 
         if self.remove:
-            X_train2 = copy.deepcopy(X_train)
-            X_test2 = copy.deepcopy(self.X_test)
             for sens in self.sens_attrs:
-                X_train2 = X_train2.drop(sens, axis=1)
-                X_test2 = X_test2.drop(sens, axis=1)
-            classifier2.fit(X_train2, y_train, attr["instance_weights"])
-            pred = classifier2.predict(X_test2)
+                X_train = X_train.drop(sens, axis=1)
+                X_test = X_test.drop(sens, axis=1)
+
+        classifier.fit(X_train, y_train, attr["instance_weights"])
+        pred = classifier.predict(X_test)
 
         if do_eval:
             metric_val = acc_bias(self.dataset_test, np.asarray(pred).reshape(-1,1), self.unprivileged_groups, self.privileged_groups, self.metric)
         else:
             metric_val = None
 
-        return pred, X_train, y_train, attr["instance_weights"], metric_val, "Reweighing"
+        return pred, X_train, y_train, attr["instance_weights"], metric_val, "Reweighing", classifier

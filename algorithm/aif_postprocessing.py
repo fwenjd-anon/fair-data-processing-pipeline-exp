@@ -94,7 +94,7 @@ class AIFPostprocessing():
             metric_val = None
 
 
-        return pred, metric_val, "EqOddsPostprocessing"
+        return pred, metric_val, "EqOddsPostprocessing", model
 
 
     def calibrated_eqodds_postproc(self, classifier, do_eval=False):
@@ -137,10 +137,10 @@ class AIFPostprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "CalibratedEqOddsPostprocessing"
+        return pred, metric_val, "CalibratedEqOddsPostprocessing", model
 
 
-    def reject_option_class(self, classifier, do_eval=False):
+    def reject_option_class(self, classifier, eps, do_eval=False):
         """
         ...
         """
@@ -162,10 +162,16 @@ class AIFPostprocessing():
         X_test = self.dataset_test.features
         y_test = self.dataset_test.labels.ravel()
         if self.remove:
+            X_train = dataset_orig_train.convert_to_dataframe()[0]
+            X_train = X_train.loc[:, X_train.columns != self.label]
+            X_valid = dataset_orig_valid.convert_to_dataframe()[0]
+            X_valid = X_valid.loc[:, X_valid.columns != self.label]
+            X_test = copy.deepcopy(self.X_test)
             for sens in self.sens_attrs:
                 X_train = X_train.drop(sens, axis=1)
                 X_valid = X_valid.drop(sens, axis=1)
                 X_test = X_test.drop(sens, axis=1)
+                
         classifier.fit(X_train, y_train)
         prediction = classifier.predict_proba(X_valid)[:,1]
         dataset_orig_valid_pred.scores = prediction.reshape(-1, 1)
@@ -175,7 +181,8 @@ class AIFPostprocessing():
         dataset_orig_test_pred = copy.deepcopy(self.dataset_test)
         dataset_orig_test_pred.scores = prediction.reshape(-1, 1)
 
-        model = RejectOptionClassification(self.unprivileged_groups, self.privileged_groups, metric_name=metric)
+        model = RejectOptionClassification(self.unprivileged_groups, self.privileged_groups,
+            metric_name=metric, metric_ub=eps, metric_lb=-eps)
         dataset_cleaned = model.fit(dataset_orig_valid, dataset_orig_valid_pred)
         pred = list(model.predict(dataset_orig_test_pred).labels.ravel())
 
@@ -184,4 +191,4 @@ class AIFPostprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "RejectOptionClassification"
+        return pred, metric_val, "RejectOptionClassification", model

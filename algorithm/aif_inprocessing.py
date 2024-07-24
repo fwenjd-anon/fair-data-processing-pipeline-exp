@@ -63,7 +63,7 @@ class AIFInprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "AdversarialDebiasing"
+        return pred, metric_val, "AdversarialDebiasing", clf
 
 
     def gerryfair(self, classifier, gamma, metric="FP", do_eval=False):
@@ -84,7 +84,7 @@ class AIFInprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "GerryFairClassifier"
+        return pred, metric_val, "GerryFairClassifier", clf
 
 
     def metafair(self, tau, do_eval=False):
@@ -105,7 +105,7 @@ class AIFInprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "MetaFairClassifier"
+        return pred, metric_val, "MetaFairClassifier", clf
 
 
     def prejudice_remover(self, eta, do_eval=False):
@@ -123,7 +123,7 @@ class AIFInprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "PrejudiceRemover"
+        return pred, metric_val, "PrejudiceRemover", clf
 
 
     def exponentiated_gradient_reduction(self, classifier, eps, eta, drop_prot_attr, do_eval=False):
@@ -149,7 +149,7 @@ class AIFInprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "ExponentiatedGradientReduction"
+        return pred, metric_val, "ExponentiatedGradientReduction", clf
 
 
     def gridsearch_reduction(self, classifier, weight, drop_prot_attr, do_eval=False):
@@ -175,4 +175,4 @@ class AIFInprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "GridSearchReduction"
+        return pred, metric_val, "GridSearchReduction", clf

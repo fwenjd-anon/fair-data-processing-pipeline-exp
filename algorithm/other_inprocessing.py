@@ -4,11 +4,13 @@ In this python file multiple classification models are trained.
 import numpy as np
 import pandas as pd
 import copy
+import os
 import tensorflow as tf
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.utils.data import TensorDataset, DataLoader
 from fairlearn.reductions import ExponentiatedGradient, GridSearch
 from fairlearn.reductions import DemographicParity, ErrorRate, EqualizedOdds
 from sklearn.linear_model import LogisticRegression
@@ -22,6 +24,8 @@ from .adv_deb_multi.adversarial_debiasing_multi import AdversarialDebiasingMulti
 from .gradual_compatibility.lr import CustomLogisticRegression
 from .fair_dummies.fair_dummies_learning import EquiClassLearner
 from .fair_dummies.others.continuous_fairness import HGR_Class_Learner
+from .fairret.loss import NormLoss
+from .fairret.statistic import FalsePositiveRate, TruePositiveRate, FalseNegativeFalsePositiveFraction, StackedLinearFractionalStatistic, PositiveRate
 from .evaluation.eval_classifier import acc_bias
 
 
@@ -87,7 +91,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "AdaFair"
+        return pred, metric_val, "AdaFair", clf
 
 
     def fglm(self, lam, family, discretization, do_eval=False):
@@ -103,7 +107,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "FairGeneralizedLinearModel"
+        return pred, metric_val, "FairGeneralizedLinearModel", clf
 
 
     def squared_diff_fair_logistic(self, lam, do_eval=False):
@@ -119,7 +123,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "SquaredDifferenceFairLogistic"
+        return pred, metric_val, "SquaredDifferenceFairLogistic", clf
 
 
     def fairness_constraint_model(self, c, tau, mu, eps, do_eval=False):
@@ -134,7 +138,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "FairnessConstraintModel"
+        return pred, metric_val, "FairnessConstraintModel", clf
 
 
     def disparate_treatment_model(self, c, tau, mu, eps, do_eval=False):
@@ -150,7 +154,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "DisparateMistreatmentModel"
+        return pred, metric_val, "DisparateMistreatmentModel", clf
 
 
     def convex_framework(self, lam, family, penalty, do_eval=False):
@@ -174,7 +178,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "ConvexFrameworkModel"
+        return pred, metric_val, "ConvexFrameworkModel", clf
 
 
     def hsic_linear_regression(self, lam, do_eval=False):
@@ -196,7 +200,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "HSICLinearRegression"
+        return pred, metric_val, "HSICLinearRegression", clf
 
 
     def general_ferm(self, eps, k, do_eval=False):
@@ -218,7 +222,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "GeneralFairERM"
+        return pred, metric_val, "GeneralFairERM", clf
 
 
     def fagtb(self, estimators, learning, lam, do_eval=False):
@@ -250,7 +254,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "FAGTB"
+        return pred, metric_val, "FAGTB", clf
 
 
     def fair_dummies(self, batch=32, lr=0.5, mu=0.99999, second_scale=0.01, epochs=50, model_type="linear_model", do_eval=False):
@@ -280,7 +284,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "FairDummies"
+        return pred, metric_val, "FairDummies", clf
 
 
     def hgr(self, batch=128, lr=0.001, mu=0.98, epochs=50, model_type="linear_model", do_eval=False):
@@ -316,7 +320,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "HGR"
+        return pred, metric_val, "HGR", clf
 
 
     def multi_adv_deb(self, weight, do_eval=False):
@@ -342,6 +346,8 @@ class Inprocessing():
         features_test.reset_index(drop=True, inplace=True)
 
         sess = tf.compat.v1.Session()
+        tf.compat.v1.disable_eager_execution()
+
         model = AdversarialDebiasingMulti(
             protected_attribute_name=self.sens_attrs[0],
             num_labels=len(meta_train[self.label].unique()),
@@ -365,7 +371,7 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "MultiAdversarialDebiasing"
+        return pred, metric_val, "MultiAdversarialDebiasing", model
 
 
     def grad_compat(self, reg=0, reg_val=1, weights_init=None, lambda_=0, do_eval=False):
@@ -401,4 +407,73 @@ class Inprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "GradualCompatibility"
+        return pred, metric_val, "GradualCompatibility", model
+
+
+    def fairret(self, lam, lr, h_layer, do_eval=False):
+        batch_size = 4096
+        nb_epochs = 100
+
+        feat = self.X_train.drop(columns=self.sens_attrs).to_numpy(dtype="float")
+        sens = self.X_train[self.sens_attrs].to_numpy(dtype="float")
+        label = self.y_train.to_numpy(dtype="float")
+
+        test = self.X_test.drop(columns=self.sens_attrs).to_numpy(dtype="float")
+        test = torch.tensor(test).float()
+
+        feat, sens, label = torch.tensor(feat).float(), torch.tensor(sens).float(), torch.tensor(label).float()
+
+        dataset = TensorDataset(feat, sens, label)
+        dataloader = DataLoader(dataset, batch_size=batch_size)
+
+        model = nn.Sequential(
+            nn.Linear(feat.shape[1], h_layer),
+            nn.ReLU(),
+            nn.Linear(h_layer, 1)
+        )
+
+        if self.metric == "equal_opportunity":
+            statistic = TruePositiveRate()
+        elif self.metric == "equalized_odds":
+            statistic = StackedLinearFractionalStatistic(TruePositiveRate(), FalsePositiveRate())
+        elif self.metric == "treatment_equality":
+            statistic = FalseNegativeFalsePositiveFraction()
+        else:
+            statistic = PositiveRate()
+
+        norm_loss = NormLoss(statistic)
+
+        optimizer = optim.Adam(model.parameters(), lr=lr)
+
+        for epoch in range(nb_epochs):
+            losses = []
+            for batch_feat, batch_sens, batch_label in dataloader:
+                optimizer.zero_grad()
+                        
+                logit = model(batch_feat)
+                loss = nn.functional.binary_cross_entropy_with_logits(logit, batch_label)
+
+                if epoch >= 20:
+                    if self.metric in ("demographic_parity", "consistency"):
+                        loss += lam * norm_loss(logit, batch_sens)
+                    else:   
+                        loss += lam * norm_loss(logit, batch_sens, batch_label)
+                loss.backward()
+                        
+                optimizer.step()
+                losses.append(loss.item())
+
+        pred_list = torch.sigmoid(model(test)).detach().numpy()
+        pred = []
+        for p in pred_list:
+            if p >= 0.5:
+                pred.append(1)
+            else:
+                pred.append(0)
+
+        if do_eval:
+            metric_val = acc_bias(self.dataset_test, np.asarray(pred).reshape(-1,1), self.unprivileged_groups, self.privileged_groups, self.metric)
+        else:
+            metric_val = None
+
+        return pred, metric_val, "fairret", model

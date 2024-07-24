@@ -18,14 +18,12 @@ def get_ngbr(df, knn):
             candidate_3 = df.iloc[ngbr[0][2]]
             return parent_candidate,candidate_2,candidate_3
 
-def generate_samples(no_of_samples,df,df_name,dict_cols):
+def generate_samples(no_of_samples,df,df_name,dict_cols,cr,f):
     
     total_data = df.values.tolist()
     knn = NN(n_neighbors=5,algorithm='auto').fit(df)
     
     for _ in range(no_of_samples):
-        cr = 0.8
-        f = 0.8
         parent_candidate, child_candidate_1, child_candidate_2 = get_ngbr(df, knn)
         new_candidate = []
         for key,value in parent_candidate.items():

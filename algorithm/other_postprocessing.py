@@ -11,6 +11,8 @@ from sklearn.linear_model import LinearRegression
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import accuracy_score
+from aif360.datasets import StandardDataset
 from .FaX_AI import FaX_methods
 from .dpabst.post_process import TransformDPAbstantion
 from .GetFair.OptimizerModel import MetaOptimizer, MetaOptimizerMLP, MetaOptimizerDirection
@@ -19,6 +21,7 @@ from .GetFair.Rewardfunctions import stat_parity, diff_FPR, diff_FNR, diff_FPR_F
 from .FairBayesDPP.dataloader import FairnessDataset
 from .FairBayesDPP.algorithm import FairBayes_DPP
 from .jiang_nachum.label_bias import LabelBiasDP_helper, LabelBiasEOD_helper, LabelBiasEOP_helper
+from .GroupConsensus.fairens import FairEnsemble
 from .evaluation.eval_classifier import acc_bias
 
 
@@ -88,7 +91,7 @@ class Postprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "FaX"
+        return pred, metric_val, "FaX", model
 
 
     def dpabst(self, classifier, alpha, do_eval=False):
@@ -117,7 +120,7 @@ class Postprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "DPAbstention"
+        return pred, metric_val, "DPAbstention", transformer
 
 
     def getfair(self, classifier, lam=0.55, step_size=0.04, episodes=5, hidden_size=30, layers=1, do_eval=False):
@@ -180,7 +183,7 @@ class Postprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "GetFair"
+        return pred, metric_val, "GetFair", classifier
 
 
     def jiang_nachum(self, classifier, iterations, learning, do_eval=False):
@@ -237,7 +240,7 @@ class Postprocessing():
         else:
             metric_val = None
 
-        return pred, self.X_train, self.y_train, weights, metric_val, "JiangNachum"
+        return pred, self.X_train, self.y_train, weights, metric_val, "JiangNachum", classifier
 
 
     def fair_bayes_dpp(self, n_epochs=200, lr=1e-1, batch_size=512, n_seeds=5, do_eval=False):
@@ -294,4 +297,114 @@ class Postprocessing():
         else:
             metric_val = None
 
-        return pred, metric_val, "FairBayesDPP"
+        return pred, metric_val, "FairBayesDPP", None
+
+
+    def lev_eq_opp(self, classifier, do_eval=False):
+        """
+        ...
+        """
+        #dataset_orig_train, dataset_orig_valid = self.dataset_train.split([0.3], shuffle=True)
+
+        feature_names = self.dataset_train.feature_names
+        if self.remove:
+            idx_wo_protected = set(range(len(feature_names)))
+            protected_attr_idx = [feature_names.index(x) for x in self.sens_attrs]
+            idx_features = list(idx_wo_protected - set(protected_attr_idx))
+        else:
+            idx_features = list(set(range(len(feature_names))))
+
+        protected_attr_idx = [feature_names.index(x) for x in self.sens_attrs]
+        idx_protected = list(set(protected_attr_idx))
+
+        X_train, y_train = self.dataset_train.features[:, idx_features], self.dataset_train.labels.ravel()
+        X_test, y_test = self.dataset_test.features[:, idx_features], self.dataset_test.labels.ravel()
+        s_train = self.dataset_train.features[:, idx_protected].ravel()
+        s_test = self.dataset_test.features[:, idx_protected].ravel()
+
+        ## train base classifier
+        classifier.fit(X_train, y_train, sample_weight=self.dataset_train.instance_weights)
+
+        ## compute prior
+        y_test_prob = classifier.predict_proba(X=X_test)[:, 1]
+        ## female mask is just a term the authors use in the implementation; this can also be another representive group
+        female_msk = (s_test == 0)
+        E_X0 = y_test_prob[female_msk].mean()
+        E_X1 = y_test_prob[~female_msk].mean()
+        P_Y0S0 = y_test_prob[female_msk].mean() * female_msk.mean()
+        P_Y0S1 = y_test_prob[female_msk].mean() * (~female_msk).mean()
+
+        ## compute theta
+        objective = np.inf
+        for theta in np.concatenate((-np.logspace(-2, 2, 10000), np.logspace(-2, 2, 10000))):
+            m0 = (y_test_prob[female_msk] * (y_test_prob[female_msk] * (2.0 - theta / P_Y0S0) >= 1)).mean() / E_X0
+            m1 = (y_test_prob[~female_msk] * (y_test_prob[~female_msk] * (2.0 + theta / P_Y0S1) >= 1)).mean() / E_X1
+
+            tmp = np.abs(m0 - m1)
+            if objective > tmp:
+                objective = tmp
+                thetahat = theta
+
+        ## apply theta
+        ntest = len(y_test)
+        pred = np.zeros((ntest,))
+        for i in range(ntest):
+            if s_test[i] == 0:
+                pred[i] = y_test_prob[i] * (2.0 - thetahat / P_Y0S0) >= 1
+            else:
+                pred[i] = y_test_prob[i] * (2.0 + thetahat / P_Y0S1) >= 1
+
+
+        if do_eval:
+            metric_val = acc_bias(self.dataset_test, np.asarray(pred).reshape(-1,1), self.unprivileged_groups, self.privileged_groups, self.metric)
+        else:
+            metric_val = None
+
+        return pred, metric_val, "LevEqOpp", classifier
+
+
+    def group_debias(self, clf, method, n_estimators, uniformity, bootstrap, do_eval=False):
+        """
+        ...
+        """
+        if method == "None":
+            method = None
+        
+        if self.metric in ("equalized_odds", "equal_opportunity"):
+            metric = "EO"
+        else:
+            metric = "DP"
+        
+        fair_how = dict()
+        fair_how["method"] = method
+        fair_how["constraint"] = metric
+
+        #many default values as others are not covered in the experiments of the corresponding paper
+        how = dict()
+        how["action"] = "drop"
+        how["drop_ratio"] = 1
+        how["pos_ratio"] = "max"
+        how["consensus"] = "disag"
+        how["pred"] = "calib"
+        how["bootstrap"] = bootstrap
+        how["uniformity"] = uniformity
+
+        classifier = FairEnsemble(estimator=clf, n_estimators=n_estimators, fair_how=fair_how, how=how)
+        X_train = copy.deepcopy(self.X_train)
+        X_test = copy.deepcopy(self.X_test)
+        if self.remove:
+            for sens in self.sens_attrs:
+                X_train = X_train[:, X_train.columns != sens]
+                X_test = X_test[:, X_test.columns != sens]
+        Z_train = self.X_train[self.sens_attrs]
+        Z_test = self.X_test[self.sens_attrs]
+
+        classifier.fit(X_train.to_numpy(), self.y_train.to_numpy().flatten(), Z_train.to_numpy().flatten())
+        pred = classifier.predict(X_test, Z_test)
+
+        if do_eval:
+            metric_val = acc_bias(self.dataset_test, np.asarray(pred).reshape(-1,1), self.unprivileged_groups, self.privileged_groups, self.metric)
+        else:
+            metric_val = None
+
+        return pred, metric_val, "GroupDebias", classifier

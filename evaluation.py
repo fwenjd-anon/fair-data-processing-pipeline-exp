@@ -43,15 +43,24 @@ original_data = original_data.drop(columns=[label])
 for sens in sens_attrs:
     original_data = original_data.loc[:, original_data.columns != sens]
 
-original_data_short = pd.read_csv(link + model_list[0] + "_prediction.csv", index_col=index)
+for i, model in enumerate(model_list):
+    try:
+        original_data_short = pd.read_csv(link + model_list[i] + "_prediction.csv", index_col=index)
+        modelnr = i
+        break
+    except:
+        pass
 original_data_short = pd.merge(original_data_short, original_data, left_index=True, right_index=True)
-original_data_short = original_data_short.loc[:, original_data_short.columns != model_list[0]]
+original_data_short = original_data_short.loc[:, original_data_short.columns != model_list[modelnr]]
 orig_datas = copy.deepcopy(original_data_short)
 original_data_short = original_data_short.loc[:, original_data_short.columns != label]
 valid_data = dataset.loc[orig_datas.index, :]
 
-for sens in sens_attrs:
-    original_data_short = original_data_short.loc[:, original_data_short.columns != sens]
+try:
+    for sens in sens_attrs:
+        original_data_short = original_data_short.loc[:, original_data_short.columns != sens]
+except:
+    original_data_short = original_data_short.loc[:, original_data_short.columns != "sensitive"]
 dataset2 = copy.deepcopy(original_data_short)
 total_size = len(original_data_short)
 
@@ -66,14 +75,15 @@ for i, row in groups.iterrows():
     sensitive_groups.append(tuple(sens_grp))
 
 df_count = 0
-result_df = pd.DataFrame()
+result_df = pd.DataFrame(columns=["model", "error_rate", "demographic_parity", "equalized_odds", "equal_opportunity", "treatment_equality"])
 if metric != "consistency":
     for model in model_list:
-        result_df.at[df_count, "model"] = model
         try:
             df = pd.read_csv(link + model + "_prediction.csv", index_col=index)
         except:
             continue
+
+        result_df.at[df_count, "model"] = model
 
         df = pd.merge(df, original_data_short, left_index=True, right_index=True)
 
@@ -111,7 +121,7 @@ if metric != "consistency":
             result_df.at[df_count, "model"] = model
             if sens_attrs[0] not in df.columns:
                 for sens in sens_attrs:
-                    df[sens] = orig_datas[sens]
+                    df[sens] = dataset[sens]
             grouped_df = df.groupby(sens_attrs)
             total_ppv = 0
             total_size = 0
@@ -130,6 +140,10 @@ if metric != "consistency":
             total_fn = 0
             num_pos = 0
             num_neg = 0
+            dp_grp = []
+            eod_grp = []
+            eop_grp = []
+            treq_grp = []
             #counterfactual = 0
             group_predsize = []
             #Get the favored group to test against and also the averages over the whole dataset
@@ -193,23 +207,46 @@ if metric != "consistency":
                         if row[model] == 0:
                             fn += 1
 
-                dp = dp + abs(model_ppv/model_size - total_ppv/total_size)
-                eq_odd = (eq_odd + 0.5*abs(model_ppv_y0/model_size_y0 - total_ppv_y0/total_size_y0)
-                    + 0.5*abs(model_ppv_y1/model_size_y1 - total_ppv_y1/total_size_y1))
-                eq_opp = eq_opp + abs(model_ppv_y1/model_size_y1 - total_ppv_y1/total_size_y1)
+                count += 1
+
+                dp_group = model_ppv/model_size - total_ppv/total_size
+                eq_odd_part_group = model_ppv_y0/model_size_y0 - total_ppv_y0/total_size_y0
+                eq_opp_group = model_ppv_y1/model_size_y1 - total_ppv_y1/total_size_y1
+                eq_odd_group = 0.5*(eq_opp_group) - 0.5*(eq_odd_part_group)
+                dp += abs(dp_group)
+                
+                eq_odd += abs(eq_odd_group)
+                eq_opp += abs(eq_opp_group)
                 if fp+fn == 0 and total_fp+total_fn == 0:
+                    tr_eq_group = 0
                     pass
                 elif fp+fn == 0:
-                    tr_eq = tr_eq + abs(0.5 - total_fp/(total_fp+total_fn))
+                    tr_eq_group = 0.5 - total_fp/(total_fp+total_fn)
                 elif total_fp+total_fn == 0:
-                    tr_eq = tr_eq + abs(fp/(fp+fn) - 0.5)
+                    tr_eq_group = fp/(fp+fn) - 0.5
                 else:
-                    tr_eq = tr_eq + abs(fp/(fp+fn) - total_fp/(total_fp+total_fn))
+                    tr_eq_group = fp/(fp+fn) - total_fp/(total_fp+total_fn)
+                tr_eq += abs(tr_eq_group)
+
+                #result_df.at[df_count, "dp_" + str(count)] = dp_group
+                #result_df.at[df_count, "eop_" + str(count)] = eq_opp_group
+                #result_df.at[df_count, "eod_part_" + str(count)] = eq_odd_part_group
+                #result_df.at[df_count, "treq_" + str(count)] = tr_eq_group
+
+                dp_grp.append(dp_group)
+                eod_grp.append(eq_odd_group)
+                eop_grp.append(eq_opp_group)
+                treq_grp.append(tr_eq_group)
 
             result_df.at[df_count, "demographic_parity"] = dp/(len(grouped_df)) * 100
             result_df.at[df_count, "equalized_odds"] = eq_odd/(len(grouped_df)) * 100
             result_df.at[df_count, "equal_opportunity"] = eq_opp/(len(grouped_df)) * 100
             result_df.at[df_count, "treatment_equality"] = tr_eq/(len(grouped_df)) * 100
+
+            result_df.at[df_count, "dp_gap"] = (max(dp_grp) - min(dp_grp)) * 100
+            result_df.at[df_count, "eod_gap"] = (max(eod_grp) - min(eod_grp)) * 100
+            result_df.at[df_count, "eop_gap"] = (max(eop_grp) - min(eop_grp)) * 100
+            result_df.at[df_count, "treq_gap"] = (max(treq_grp) - min(treq_grp)) * 100
 
         df_count += 1
 
