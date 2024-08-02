@@ -199,7 +199,7 @@ if fselection == "VT":
     variances = selector.variances_
     rm_list = []
     for i, col in enumerate(cols):
-        if col not in sens_attrs and variances[i] < 0.01:
+        if col not in sens_attrs and variances[i] < 0.1:
             rm_list.append(col)
     if len(rm_list) >= 1:
         for rm in rm_list:
