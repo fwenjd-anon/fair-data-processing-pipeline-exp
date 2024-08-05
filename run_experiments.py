@@ -121,7 +121,7 @@ subprocess.check_call(['python', '-Wignore', 'main.py', '--output', str(link),
     '--ds', str(ds), '--sensitive', str(sensitive), '--favored', str(favored),
     '--label', str(label), '--testsize', str(testsize), '--randomstate', str(randomstate),
     '--models', str(model_list), '--metric', str(metric), '--tuning', str(tuning),
-    '--opt', str(opt), '--binarize', str(binarize), '--removal', str(removal),
+    '--binarize', str(binarize), '--removal', str(removal),
     '--balance', str(balance), '--fselection', str(fselection), '--dimred', str(dimred)])
 
 
@@ -131,6 +131,6 @@ if tuning:
         model_list_eval.append(model + "_tuned")
     model_list_eval.sort()
 
-    subprocess.check_call(['python', '-Wignore', 'evaluation.py', '--folder', str(link),
-        '--ds', str(ds), '--sensitive', str(sensitive), '--favored', str(favored),
-        '--label', str(label), '--models', str(model_list_eval), '--metric', str(metric)])
+subprocess.check_call(['python', '-Wignore', 'evaluation.py', '--folder', str(link),
+    '--ds', str(ds), '--sensitive', str(sensitive), '--favored', str(favored),
+    '--label', str(label), '--models', str(model_list_eval), '--metric', str(metric)])
